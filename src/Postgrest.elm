@@ -17,7 +17,7 @@ module Postgrest exposing
     , Direction(..), Nulls(..), order
     , createOne, createMany, updateOne, updateMany, deleteOne, deleteMany
     , Changeset, change, batch
-    , toHttpRequest
+    , toTask
     )
 
 {-| Make PostgREST requests in Elm.
@@ -159,6 +159,7 @@ import Dict exposing (Dict)
 import Http
 import Json.Decode as Decode
 import Json.Encode as Encode
+import Task exposing (Task)
 import Url.Builder as Builder exposing (QueryParameter)
 
 
@@ -1517,31 +1518,30 @@ deleteMany (Schema name attributes) options =
 
 
 {-| -}
-toHttpRequest : { timeout : Maybe Float, token : Maybe String, url : String } -> Request a -> Http.Request a
-toHttpRequest { url, timeout, token } request =
+toTask : { timeout : Maybe Float, token : Maybe String, url : String } -> Request a -> Task Http.Error a
+toTask { url, timeout, token } request =
     let
-        ( authHeaders, withCredentials ) =
+        authHeaders =
             case token of
                 Just str ->
-                    ( [ Http.header "Authorization" ("Bearer " ++ str) ], True )
+                    [ Http.header "Authorization" ("Bearer " ++ str) ]
 
                 Nothing ->
-                    ( [], False )
+                    []
     in
     case request of
         Read { parameters, decoder } ->
-            Http.request
+            Http.task
                 { method = "GET"
                 , headers = parametersToHeaders parameters ++ authHeaders
                 , url = parametersToUrl url parameters
                 , body = Http.emptyBody
-                , expect = Http.expectJson decoder
+                , resolver = jsonResolver decoder
                 , timeout = timeout
-                , withCredentials = withCredentials
                 }
 
-        Page { parameters, expect } ->
-            Http.request
+        Page { parameters, resolver } ->
+            Http.task
                 { method = "GET"
                 , headers =
                     parametersToHeaders parameters
@@ -1549,43 +1549,68 @@ toHttpRequest { url, timeout, token } request =
                         ++ [ Http.header "Prefer" "count=exact" ]
                 , url = parametersToUrl url parameters
                 , body = Http.emptyBody
-                , expect = expect
+                , resolver = resolver
                 , timeout = timeout
-                , withCredentials = withCredentials
                 }
 
         Update { parameters, decoder, value } ->
-            Http.request
+            Http.task
                 { method = "PATCH"
                 , headers = parametersToHeaders parameters ++ authHeaders
                 , url = parametersToUrl url parameters
                 , body = Http.jsonBody value
-                , expect = Http.expectJson decoder
+                , resolver = jsonResolver decoder
                 , timeout = timeout
-                , withCredentials = withCredentials
                 }
 
         Create { parameters, decoder, value } ->
-            Http.request
+            Http.task
                 { method = "POST"
                 , headers = parametersToHeaders parameters ++ authHeaders
                 , url = parametersToUrl url parameters
                 , body = Http.jsonBody value
-                , expect = Http.expectJson decoder
+                , resolver = jsonResolver decoder
                 , timeout = timeout
-                , withCredentials = withCredentials
                 }
 
         Delete { parameters, decoder } ->
-            Http.request
+            Http.task
                 { method = "DELETE"
                 , headers = parametersToHeaders parameters ++ authHeaders
                 , url = parametersToUrl url parameters
                 , body = Http.emptyBody
-                , expect = Http.expectJson decoder
+                , resolver = jsonResolver decoder
                 , timeout = timeout
-                , withCredentials = withCredentials
                 }
+
+
+jsonResolver : Decode.Decoder a -> Http.Resolver Http.Error a
+jsonResolver decoder =
+    okResolverWithMetadata <|
+        \_ body ->
+            Decode.decodeString decoder body
+                |> Result.mapError (Http.BadBody << Decode.errorToString)
+
+
+okResolverWithMetadata : (Http.Metadata -> String -> Result Http.Error a) -> Http.Resolver Http.Error a
+okResolverWithMetadata f =
+    Http.stringResolver <|
+        \response ->
+            case response of
+                Http.BadUrl_ x ->
+                    Err <| Http.BadUrl x
+
+                Http.Timeout_ ->
+                    Err Http.Timeout
+
+                Http.NetworkError_ ->
+                    Err Http.NetworkError
+
+                Http.BadStatus_ metadata _ ->
+                    Err <| Http.BadStatus metadata.statusCode
+
+                Http.GoodStatus_ metadata body ->
+                    f metadata body
 
 
 parametersToHeaders : Parameters -> List Http.Header
