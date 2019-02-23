@@ -250,7 +250,7 @@ type Request a
         }
     | Page
         { parameters : Parameters
-        , expect : Http.Expect a
+        , resolver : Http.Resolver Http.Error a
         }
 
 
@@ -1343,17 +1343,17 @@ readPage (Schema schemaName attributes) options =
                 }
                 embeds
 
-        handleResponse response =
+        handleResponse metadata body =
             let
                 countResult =
-                    Dict.get "Content-Range" response.headers
+                    Dict.get "Content-Range" metadata.headers
                         |> Maybe.andThen (String.split "/" >> List.reverse >> List.head)
                         |> Maybe.andThen String.toInt
-                        |> Result.fromMaybe "Invalid Content-Range Header"
+                        |> Result.fromMaybe (Http.BadBody "Invalid Content-Range Header")
 
                 jsonResult =
-                    Decode.decodeString (Decode.list decoder) response.body
-                        |> Result.mapError Decode.errorToString
+                    Decode.decodeString (Decode.list decoder) body
+                        |> Result.mapError (Http.BadBody << Decode.errorToString)
             in
             Result.map2 (\data count -> { data = data, count = count })
                 jsonResult
@@ -1361,7 +1361,7 @@ readPage (Schema schemaName attributes) options =
     in
     Page
         { parameters = parameters
-        , expect = Http.expectStringResponse handleResponse
+        , resolver = okResolverWithMetadata handleResponse
         }
 
 
