@@ -243,6 +243,7 @@ type Request a
         { parameters : Parameters
         , decoder : Decode.Decoder a
         , value : Encode.Value
+        , headers : List Http.Header
         }
     | Delete
         { parameters : Parameters
@@ -1170,6 +1171,7 @@ createOne (Schema name attributes) options =
         { parameters = parameters
         , decoder = decoder
         , value = Encode.object (toKeyValuePairs attributes)
+        , headers = []
         }
 
 
@@ -1183,6 +1185,7 @@ createMany :
         , order : List (Order attributes)
         , limit : Maybe Int
         , offset : Maybe Int
+        , mergeDuplicates : Bool
         }
     -> Request (List a)
 createMany (Schema name attributes) options =
@@ -1214,11 +1217,18 @@ createMany (Schema name attributes) options =
                 , cardinality = cardinality
                 }
                 embeds
+
+        headers =
+            if options.mergeDuplicates then
+                [ Http.header "Prefer" "resolution=merge-duplicates" ]
+            else
+                []
     in
     Create
         { parameters = parameters
         , decoder = Decode.list decoder
         , value = jsonValue
+        , headers = headers
         }
 
 
@@ -1563,10 +1573,10 @@ toTask { url, timeout, token } request =
                 , timeout = timeout
                 }
 
-        Create { parameters, decoder, value } ->
+        Create { parameters, decoder, value, headers } ->
             Http.task
                 { method = "POST"
-                , headers = parametersToHeaders parameters ++ authHeaders
+                , headers = parametersToHeaders parameters ++ authHeaders ++ headers
                 , url = parametersToUrl url parameters
                 , body = Http.jsonBody value
                 , resolver = jsonResolver decoder
