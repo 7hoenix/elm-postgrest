@@ -1,4 +1,4 @@
-module PostgRest exposing
+module Postgrest exposing
     ( Schema, schema
     , Attribute, string, int, float, bool, nullable
     , attribute
