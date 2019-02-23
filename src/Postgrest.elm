@@ -459,8 +459,8 @@ type alias Orders =
 If you think about it, a `Schema` is nothing more than an opaque wrapper around _any_ 2 types. This is important to note because it means that it's incredibly easy to define your `Schema` incorrectly! Luckily, once your `Schema` is correct, your requests will pretty much always be valid.
 
 -}
-schema : String -> attributes -> Schema id attributes
-schema name attrs =
+schema : id -> String -> attributes -> Schema id attributes
+schema _ name attrs =
     Schema name attrs
 
 
@@ -561,8 +561,8 @@ nullable (Attribute { name, decoder, encoder, toString }) =
 
 {-| **Important Note:** `String` parameter is the name of the foreign key
 -}
-hasOne : String -> Relationship HasOne id
-hasOne =
+hasOne : id -> String -> Relationship HasOne id
+hasOne _ =
     Relationship
 
 
@@ -572,15 +572,15 @@ hasOne =
   - One to Many: name of foreign key
 
 -}
-hasMany : String -> Relationship HasMany id
-hasMany =
+hasMany : id -> String -> Relationship HasMany id
+hasMany _ =
     Relationship
 
 
 {-| **Important Note:** `String` parameter is the name of the foreign key
 -}
-hasNullable : String -> Relationship HasNullable id
-hasNullable =
+hasNullable : id -> String -> Relationship HasNullable id
+hasNullable _ =
     Relationship
 
 
