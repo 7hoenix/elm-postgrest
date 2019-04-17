@@ -13,7 +13,6 @@ module Postgrest exposing
     , like, ilike, eq, gte, gt, lte, lt, is
     , true, false
     , not, all, any
-    , on
     , Order, asc, desc
     , Direction(..), Nulls(..), order
     , createOne, createMany, updateOne, updateMany, deleteOne, deleteMany
@@ -1070,37 +1069,6 @@ any conds =
             , conditions = conds
             }
 
-
-{-| Apply conditions to a related schema
--}
-on : (attributes1 -> Relationship count id) -> Schema id attributes2 -> Condition attributes2 -> Condition attributes1
-on getRelationship ((Schema _ attributes2) as schema_) cond =
-    case cond of
-        CBoolean b ->
-            CBoolean b
-
-        CCombine { negated, operator, conditions } ->
-            CCombine
-                { negated = negated
-                , operator = operator
-                , conditions = List.map (on getRelationship schema_) conditions
-                }
-
-        COperator { negated, operator, getKeyValue } ->
-            COperator
-                { negated = negated
-                , operator = operator
-                , getKeyValue =
-                    \attributes1 ->
-                        let
-                            (Relationship fkName) =
-                                getRelationship attributes1
-
-                            { key, value } =
-                                getKeyValue attributes2
-                        in
-                        { key = fkName ++ "." ++ key, value = value }
-                }
 
 isTrueCond : Condition attributes -> Bool
 isTrueCond cond =
