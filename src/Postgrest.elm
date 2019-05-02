@@ -17,7 +17,7 @@ module Postgrest exposing
     , Direction(..), Nulls(..), order
     , createOne, createMany, updateOne, updateMany, deleteOne, deleteMany
     , Changeset, change, batch
-    , toTask
+    , Error, toTask
     )
 
 {-| Make PostgREST requests in Elm.
@@ -251,7 +251,7 @@ type Request a
         }
     | Page
         { parameters : Parameters
-        , resolver : Http.Resolver Http.Error a
+        , resolver : Http.Resolver Error a
         }
 
 
@@ -1528,7 +1528,12 @@ deleteMany (Schema name attributes) options =
 
 
 {-| -}
-toTask : { timeout : Maybe Float, token : Maybe String, url : String } -> Request a -> Task Http.Error a
+type alias Error =
+    Http.Error
+
+
+{-| -}
+toTask : { timeout : Maybe Float, token : Maybe String, url : String } -> Request a -> Task Error a
 toTask { url, timeout, token } request =
     let
         authHeaders =
@@ -1594,7 +1599,7 @@ toTask { url, timeout, token } request =
                 }
 
 
-jsonResolver : Decode.Decoder a -> Http.Resolver Http.Error a
+jsonResolver : Decode.Decoder a -> Http.Resolver Error a
 jsonResolver decoder =
     okResolverWithMetadata <|
         \_ body ->
@@ -1602,7 +1607,7 @@ jsonResolver decoder =
                 |> Result.mapError (Http.BadBody << Decode.errorToString)
 
 
-okResolverWithMetadata : (Http.Metadata -> String -> Result Http.Error a) -> Http.Resolver Http.Error a
+okResolverWithMetadata : (Http.Metadata -> String -> Result Error a) -> Http.Resolver Error a
 okResolverWithMetadata f =
     Http.stringResolver <|
         \response ->
