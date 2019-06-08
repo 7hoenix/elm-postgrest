@@ -1603,8 +1603,11 @@ jsonResolver : Decode.Decoder a -> Http.Resolver Error a
 jsonResolver decoder =
     okResolverWithMetadata <|
         \_ body ->
-            Decode.decodeString decoder body
-                |> Result.mapError (Http.BadBody << Decode.errorToString)
+            Result.mapError (Http.BadBody << Decode.errorToString) <|
+                if String.isEmpty body then
+                    Decode.decodeValue decoder (Encode.list never [])
+                else
+                    Decode.decodeString decoder body
 
 
 okResolverWithMetadata : (Http.Metadata -> String -> Result Error a) -> Http.Resolver Error a
