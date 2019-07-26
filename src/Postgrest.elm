@@ -1146,9 +1146,10 @@ createOne :
     ->
         { change : Changeset attributes
         , select : Selection attributes a
+        , mergeDuplicate : Bool
         }
     -> Request a
-createOne (Schema name attributes) options =
+createOne ((Schema name attributes) as s) options =
     let
         (Changeset toKeyValuePairs) =
             options.change
@@ -1158,21 +1159,30 @@ createOne (Schema name attributes) options =
 
         { decoder, attributeNames, embeds } =
             getSelection attributes
-
-        parameters =
-            Parameters
-                { schemaName = name
-                , attributeNames = attributeNames
-                , cardinality = One (Err True)
-                }
-                embeds
     in
-    Create
-        { parameters = parameters
-        , decoder = decoder
-        , value = Encode.object (toKeyValuePairs attributes)
-        , headers = []
-        }
+    if options.mergeDuplicate then
+        createOrUpdate (firstOrTry decoder)  s
+            { change = [ options.change ]
+            , select = options.select
+            , where_ = true
+            , order = []
+            , limit = Nothing
+            , offset = Nothing
+            , mergeDuplicates = True
+            }
+    else
+        Create
+            { parameters =
+                Parameters
+                    { schemaName = name
+                    , attributeNames = attributeNames
+                    , cardinality = One (Err True)
+                    }
+                    embeds
+            , decoder = decoder
+            , value = Encode.object (toKeyValuePairs attributes)
+            , headers = []
+            }
 
 
 {-| -}
@@ -1188,7 +1198,24 @@ createMany :
         , mergeDuplicates : Bool
         }
     -> Request (List a)
-createMany (Schema name attributes) options =
+createMany =
+    createOrUpdate identity
+
+
+createOrUpdate :
+    (Decode.Decoder (List a) -> Decode.Decoder b)
+    -> Schema id attributes
+    ->
+        { change : List (Changeset attributes)
+        , select : Selection attributes a
+        , where_ : Condition attributes
+        , order : List (Order attributes)
+        , limit : Maybe Int
+        , offset : Maybe Int
+        , mergeDuplicates : Bool
+        }
+    -> Request b
+createOrUpdate transform (Schema name attributes) options =
     let
         jsonValue =
             options.change
@@ -1226,7 +1253,7 @@ createMany (Schema name attributes) options =
     in
     Create
         { parameters = parameters
-        , decoder = Decode.list decoder
+        , decoder = transform (Decode.list decoder)
         , value = jsonValue
         , headers = headers
         }
@@ -2088,3 +2115,12 @@ binaryLogicalOperatorToString binop =
 
         Or ->
             "or"
+
+
+firstOrTry : Decode.Decoder a -> Decode.Decoder (List a) -> Decode.Decoder a
+firstOrTry backup =
+    Decode.andThen <|
+        (List.head
+           >> Maybe.map Decode.succeed
+           >> Maybe.withDefault backup
+        )
