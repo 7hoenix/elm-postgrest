@@ -327,52 +327,52 @@ type Condition_
 
 
 {-
-   Abbreviation 	Meaning 	               Postgres Equivalent
+   Abbreviation     Meaning                    Postgres Equivalent
 
-   eq 	            equals 	                     =
-   gt 	            greater than                 >
-   gte 	            greater than or equal 	     >=
-   lt 	            less than 	                 <
-   lte 	            less than or equal 	         <=
-   neq 	            not equal 	                 <> or !=
+   eq                 equals                          =
+   gt                 greater than                 >
+   gte                 greater than or equal          >=
+   lt                 less than                      <
+   lte                 less than or equal              <=
+   neq                 not equal                      <> or !=
 
-   like 	        LIKE operator                LIKE
+   like             LIKE operator                LIKE
                     (use * in place of %)
 
-   ilike 	        ILIKE operator               ILIKE
+   ilike             ILIKE operator               ILIKE
                     (use * in place of %)
 
-   in 	            one of a list of values      IN
+   in                 one of a list of values      IN
                     e.g. ?a=in.1,2,3
 
-   is 	            checking for exact           IS
+   is                 checking for exact           IS
                     equality (null,true,false)
 
-   fts 	            full-text search using       @@
+   fts                 full-text search using       @@
                     to_tsquery
 
-   cs 	            contains                     @>
+   cs                 contains                     @>
                     e.g. ?tags=cs.{example, new}
 
-   cd 	            contained in                 <@
+   cd                 contained in                 <@
                     e.g. ?values=cd.{1,2,3}
 
-   ov 	            overlap                      &&
+   ov                 overlap                      &&
                     e.g. ?period=ov.[2017-01-01,2017-06-30]
 
-   sl 	            strictly left of,            <<
+   sl                 strictly left of,            <<
                     e.g. ?range=sl.(1,10)
 
-   sr 	            strictly right of 	         >>
+   sr                 strictly right of              >>
 
-   nxr 	            does not extend to the       &<
+   nxr                 does not extend to the       &<
                     right of
                     e.g. ?range=nxr.(1,10)
 
-   nxl 	            does not extend to the       &>
+   nxl                 does not extend to the       &>
                     left of
 
-   adj 	            is adjacent to,              -|-
+   adj                 is adjacent to,              -|-
                     e.g. ?range=adj.(1,10)
 
 -}
