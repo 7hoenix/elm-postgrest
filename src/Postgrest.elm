@@ -4,7 +4,7 @@ module Postgrest exposing
     , attribute
     , Relationship, HasOne, hasOne, HasMany, hasMany, HasNullable, hasNullable
     , Request
-    , readAll, readOne, readMany, readPage
+    , readAll, readOne, readMany
     , Selection
     , field, succeed
     , map, map2, map3, map4, map5, map6, map7, map8
@@ -17,7 +17,16 @@ module Postgrest exposing
     , Direction(..), Nulls(..), order
     , createOne, createMany, updateOne, updateMany, deleteOne, deleteMany
     , Changeset, change, batch
-    , Error, toTask
+    ,  Error
+       -- 7rained specific
+      , Taskable
+      , jsonResolver
+      , jsonResolverForTesting
+      , toTask
+        -- , readPage
+      , toTaskWithResolver
+      , toTaskable
+
     )
 
 {-| Make PostgREST requests in Elm.
@@ -243,16 +252,19 @@ type Request a
         { parameters : Parameters
         , decoder : Decode.Decoder a
         , value : Encode.Value
-        , headers : List Http.Header
+        , headers : List ( String, String )
         }
     | Delete
         { parameters : Parameters
         , decoder : Decode.Decoder a
         }
-    | Page
-        { parameters : Parameters
-        , resolver : Http.Resolver Error a
-        }
+
+
+
+-- | Page
+--     { parameters : Parameters
+--     , resolver : Http.Resolver Error a
+--     }
 
 
 type Parameters
@@ -1161,7 +1173,8 @@ createOne ((Schema name attributes) as s) options =
             getSelection attributes
     in
     if options.mergeDuplicate then
-        createOrUpdate (firstOrTry decoder)  s
+        createOrUpdate (firstOrTry decoder)
+            s
             { change = [ options.change ]
             , select = options.select
             , where_ = true
@@ -1170,6 +1183,7 @@ createOne ((Schema name attributes) as s) options =
             , offset = Nothing
             , mergeDuplicates = True
             }
+
     else
         Create
             { parameters =
@@ -1247,7 +1261,8 @@ createOrUpdate transform (Schema name attributes) options =
 
         headers =
             if options.mergeDuplicates then
-                [ Http.header "Prefer" "resolution=merge-duplicates" ]
+                [ ( "Prefer", "resolution=merge-duplicates" ) ]
+
             else
                 []
     in
@@ -1342,64 +1357,59 @@ readAll s select =
         }
 
 
-{-| -}
-readPage :
-    Schema id attributes
-    ->
-        { select : Selection attributes a
-        , where_ : Condition attributes
-        , order : ( Order attributes, List (Order attributes) )
-        , page : Int
-        , size : Int
-        }
-    -> Request { count : Int, data : List a }
-readPage (Schema schemaName attributes) options =
-    let
-        ( firstOrder, restOrder ) =
-            options.order
 
-        (Selection getSelection) =
-            options.select
-
-        { attributeNames, embeds, decoder } =
-            getSelection attributes
-
-        cardinality =
-            Many
-                { order = applyOrders attributes (firstOrder :: restOrder)
-                , where_ = applyCondition attributes options.where_
-                , limit = Just options.size
-                , offset = Just ((options.page - 1) * options.size)
-                }
-
-        parameters =
-            Parameters
-                { schemaName = schemaName
-                , attributeNames = attributeNames
-                , cardinality = cardinality
-                }
-                embeds
-
-        handleResponse metadata body =
-            let
-                countResult =
-                    Dict.get "Content-Range" metadata.headers
-                        |> Maybe.andThen (String.split "/" >> List.reverse >> List.head)
-                        |> Maybe.andThen String.toInt
-                        |> Result.fromMaybe (Http.BadBody "Invalid Content-Range Header")
-
-                jsonResult =
-                    Decode.decodeString (Decode.list decoder) body
-                        |> Result.mapError (Http.BadBody << Decode.errorToString)
-            in
-            Result.map2 (\data count -> { data = data, count = count })
-                jsonResult
-                countResult
-    in
-    Page
-        { parameters = parameters
-        , resolver = okResolverWithMetadata handleResponse
-        }
+-- {-| -}
+-- readPage :
+--     Schema id attributes
+--     ->
+--         { select : Selection attributes a
+--         , where_ : Condition attributes
+--         , order : ( Order attributes, List (Order attributes) )
+--         , page : Int
+--         , size : Int
+--         }
+--     -> Request { count : Int, data : List a }
+-- readPage (Schema schemaName attributes) options =
+--     let
+--         ( firstOrder, restOrder ) =
+--             options.order
+--         (Selection getSelection) =
+--             options.select
+--         { attributeNames, embeds, decoder } =
+--             getSelection attributes
+--         cardinality =
+--             Many
+--                 { order = applyOrders attributes (firstOrder :: restOrder)
+--                 , where_ = applyCondition attributes options.where_
+--                 , limit = Just options.size
+--                 , offset = Just ((options.page - 1) * options.size)
+--                 }
+--         parameters =
+--             Parameters
+--                 { schemaName = schemaName
+--                 , attributeNames = attributeNames
+--                 , cardinality = cardinality
+--                 }
+--                 embeds
+--         handleResponse metadata body =
+--             let
+--                 countResult =
+--                     Dict.get "Content-Range" metadata.headers
+--                         |> Maybe.andThen (String.split "/" >> List.reverse >> List.head)
+--                         |> Maybe.andThen String.toInt
+--                         |> Result.fromMaybe (Http.BadBody "Invalid Content-Range Header")
+--                 jsonResult =
+--                     Decode.decodeString (Decode.list decoder) body
+--                         |> Result.mapError (Http.BadBody << Decode.errorToString)
+--             in
+--             Result.map2 (\data count -> { data = data, count = count })
+--                 jsonResult
+--                 countResult
+--     in
+--     Page
+--         { parameters = parameters
+--         , resolver = okResolverWithMetadata handleResponse
+--         }
 
 
 {-| -}
@@ -1559,71 +1569,163 @@ type alias Error =
     Http.Error
 
 
-{-| -}
-toTask : { timeout : Maybe Float, token : Maybe String, url : String } -> Request a -> Task Error a
-toTask { url, timeout, token } request =
+type alias Taskable a =
+    { method : String
+    , headers : List ( String, String )
+    , url : String
+    , body : Maybe Encode.Value
+
+    -- , resolver : Http.Resolver Error a
+    , decoder : Decode.Decoder a
+    , timeout : Maybe Float
+    }
+
+
+toTaskable : { timeout : Maybe Float, token : Maybe String, url : String } -> Request a -> Taskable a
+toTaskable { url, timeout, token } request =
     let
         authHeaders =
             case token of
                 Just str ->
-                    [ Http.header "Authorization" ("Bearer " ++ str) ]
+                    [ ( "Authorization", "Bearer " ++ str ) ]
 
                 Nothing ->
                     []
     in
     case request of
         Read { parameters, decoder } ->
-            Http.task
-                { method = "GET"
-                , headers = parametersToHeaders parameters ++ authHeaders
-                , url = parametersToUrl url parameters
-                , body = Http.emptyBody
-                , resolver = jsonResolver decoder
-                , timeout = timeout
-                }
+            { method = "GET"
+            , headers = parametersToHeaders parameters ++ authHeaders
+            , url = parametersToUrl url parameters
+            , body = Nothing
+            , decoder = decoder
+            , timeout = timeout
+            }
 
-        Page { parameters, resolver } ->
-            Http.task
-                { method = "GET"
-                , headers =
-                    parametersToHeaders parameters
-                        ++ authHeaders
-                        ++ [ Http.header "Prefer" "count=exact" ]
-                , url = parametersToUrl url parameters
-                , body = Http.emptyBody
-                , resolver = resolver
-                , timeout = timeout
-                }
-
+        -- Page { parameters, resolver } ->
+        --     { method = "GET"
+        --     , headers =
+        --         parametersToHeaders parameters
+        --             ++ authHeaders
+        --             ++ [ ( "Prefer", "count=exact" ) ]
+        --     , url = parametersToUrl url parameters
+        --     , body = Nothing
+        --     , resolver = resolver
+        --     , timeout = timeout
+        --     }
         Update { parameters, decoder, value } ->
-            Http.task
-                { method = "PATCH"
-                , headers = parametersToHeaders parameters ++ authHeaders
-                , url = parametersToUrl url parameters
-                , body = Http.jsonBody value
-                , resolver = jsonResolver decoder
-                , timeout = timeout
-                }
+            { method = "PATCH"
+            , headers = parametersToHeaders parameters ++ authHeaders
+            , url = parametersToUrl url parameters
+            , body = Just value
+            , decoder = decoder
+            , timeout = timeout
+            }
 
         Create { parameters, decoder, value, headers } ->
-            Http.task
-                { method = "POST"
-                , headers = parametersToHeaders parameters ++ authHeaders ++ headers
-                , url = parametersToUrl url parameters
-                , body = Http.jsonBody value
-                , resolver = jsonResolver decoder
-                , timeout = timeout
-                }
+            { method = "POST"
+            , headers = parametersToHeaders parameters ++ authHeaders ++ headers
+            , url = parametersToUrl url parameters
+            , body = Just value
+            , decoder = decoder
+            , timeout = timeout
+            }
 
         Delete { parameters, decoder } ->
-            Http.task
-                { method = "DELETE"
-                , headers = parametersToHeaders parameters ++ authHeaders
-                , url = parametersToUrl url parameters
-                , body = Http.emptyBody
-                , resolver = jsonResolver decoder
-                , timeout = timeout
-                }
+            { method = "DELETE"
+            , headers = parametersToHeaders parameters ++ authHeaders
+            , url = parametersToUrl url parameters
+            , body = Nothing
+            , decoder = decoder
+            , timeout = timeout
+            }
+
+
+toTaskWithResolver toResolver ({ url, timeout, token } as asdf) request =
+    let
+        genericStuff =
+            toTaskable asdf request
+
+        taskStuff =
+            { method = genericStuff.method
+            , headers = List.map (\( k, v ) -> Http.header k v) genericStuff.headers
+            , url = genericStuff.url
+            , body =
+                case genericStuff.body of
+                    Nothing ->
+                        Http.emptyBody
+
+                    Just body ->
+                        Http.jsonBody body
+            , resolver = toResolver genericStuff.decoder
+            , timeout = genericStuff.timeout
+            }
+    in
+    Http.task taskStuff
+
+
+{-| -}
+toTask : { timeout : Maybe Float, token : Maybe String, url : String } -> Request a -> Task Error a
+toTask ({ url, timeout, token } as asdf) request =
+    let
+        genericStuff =
+            toTaskable asdf request
+
+        taskStuff =
+            { method = genericStuff.method
+            , headers = List.map (\( k, v ) -> Http.header k v) genericStuff.headers
+            , url = genericStuff.url
+            , body =
+                case genericStuff.body of
+                    Nothing ->
+                        Http.emptyBody
+
+                    Just body ->
+                        Http.jsonBody body
+            , resolver = jsonResolver genericStuff.decoder
+            , timeout = genericStuff.timeout
+            }
+    in
+    Http.task taskStuff
+
+
+
+-- jsonResolverForTesting : Decode.Decoder a -> Http.Resolver Error a
+
+
+jsonResolverForTesting toResolver decoder =
+    okResolverWithMetadataForTesting toResolver <|
+        \_ body ->
+            Result.mapError (Http.BadBody << Decode.errorToString) <|
+                if String.isEmpty body then
+                    Decode.decodeValue decoder (Encode.list never [])
+
+                else
+                    Decode.decodeString decoder body
+
+
+
+-- okResolverWithMetadataForTesting : (Http.Response a -> Http.Resolver Error a) -> (Http.Metadata -> String -> Result Error a) -> Http.Resolver Error a
+
+
+okResolverWithMetadataForTesting toResolver f =
+    toResolver <|
+        \response ->
+            case response of
+                Http.BadUrl_ x ->
+                    Err <| Http.BadUrl x
+
+                Http.Timeout_ ->
+                    Err Http.Timeout
+
+                Http.NetworkError_ ->
+                    Err Http.NetworkError
+
+                Http.BadStatus_ metadata _ ->
+                    Err <| Http.BadStatus metadata.statusCode
+
+                Http.GoodStatus_ metadata body ->
+                    f metadata body
 
 
 jsonResolver : Decode.Decoder a -> Http.Resolver Error a
@@ -1633,6 +1735,7 @@ jsonResolver decoder =
             Result.mapError (Http.BadBody << Decode.errorToString) <|
                 if String.isEmpty body then
                     Decode.decodeValue decoder (Encode.list never [])
+
                 else
                     Decode.decodeString decoder body
 
@@ -1658,16 +1761,16 @@ okResolverWithMetadata f =
                     f metadata body
 
 
-parametersToHeaders : Parameters -> List Http.Header
+parametersToHeaders : Parameters -> List ( String, String )
 parametersToHeaders (Parameters { cardinality, attributeNames } embeds) =
     case cardinality of
         Many _ ->
             case ( attributeNames, embeds ) of
                 ( [], [] ) ->
-                    [ Http.header "Prefer" "return=minimal" ]
+                    [ ( "Prefer", "return=minimal" ) ]
 
                 ( _, _ ) ->
-                    [ Http.header "Prefer" "return=representation" ]
+                    [ ( "Prefer", "return=representation" ) ]
 
         One _ ->
             -- we need to use "return=representation" in order to get the safety
@@ -1676,8 +1779,8 @@ parametersToHeaders (Parameters { cardinality, attributeNames } embeds) =
             -- even if you don't explictly select. this relates to the strange
             -- edge case: which is if you succeed () -- and the table has write
             -- only fields, the update will fail.
-            [ Http.header "Accept" "application/vnd.pgrst.object+json"
-            , Http.header "Prefer" "return=representation"
+            [ ( "Accept", "application/vnd.pgrst.object+json" )
+            , ( "Prefer", "return=representation" )
             ]
 
 
@@ -2121,6 +2224,6 @@ firstOrTry : Decode.Decoder a -> Decode.Decoder (List a) -> Decode.Decoder a
 firstOrTry backup =
     Decode.andThen <|
         (List.head
-           >> Maybe.map Decode.succeed
-           >> Maybe.withDefault backup
+            >> Maybe.map Decode.succeed
+            >> Maybe.withDefault backup
         )
